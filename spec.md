@@ -200,10 +200,6 @@ Jira APIを使って、期限日を過ぎた未完了の課題を毎日Slack通�
 - モデル（gpt-4）とトークン制限を確認
 - Secrets Managerに保存
 
-### 📈 運用・品質指標
-
--
-
 ---
 
 ## Need Professional Help in Developing Your Architecture?
