@@ -1,32 +1,35 @@
-SPEC-1-Jira-AI-Commenter
+# SPEC-1-Jira-AI-Commenter
 
-Background
+## Background
 
 Jiraで課題が作成された際に、自動的にその内容に応じた通知を返すニーズがある。既存の業務DB（SQLite）との照合と、OpenAI APIによるLLMの活用によって、適切なフィードバックをSlackチャンネルに送信したい。
 
-Requirements
-	•	Must: Jiraで課題が作成されたタイミングでWebhookを受け取る
-	•	Must: SQLiteに格納された情報を照合し、通知内容を動的に生成する
-	•	Must: OpenAI APIを利用して自然言語の通知を生成する
-	•	Must: 通知は特定のSlackチャンネルに投稿される
-	•	Should: セキュリティ対策としてWebhookのURLは非公開のランダムパス構造にする
-	•	Should: SQLiteの内容はJira Webhook受信のたびに更新される構成とする
-	•	Could: ログや処理状況をCloudWatch Logsで可視化
+## Requirements
 
-Method
+- **Must**: Jiraで課題が作成されたタイミングでWebhookを受け取る
+- **Must**: SQLiteに格納された情報を照合し、通知内容を動的に生成する
+- **Must**: OpenAI APIを利用して自然言語の通知を生成する
+- **Must**: 通知は特定のSlackチャンネルに投稿される
+- **Should**: セキュリティ対策としてWebhookのURLは非公開のランダムパス構造にする
+- **Should**: SQLiteの内容はJira Webhook受信のたびに更新される構成とする
+- **Could**: ログや処理状況をCloudWatch Logsで可視化
+
+## Method
 
 以下のアーキテクチャを採用する。
 
-AIエージェント的な処理方針
+### AIエージェント的な処理方針
 
 OpenAI APIは、Jiraから受け取った課題情報およびSQLiteスキーマ情報をプロンプトに含めることで、次のようなAIエージェント的な振る舞いを行います：
-	1.	Jira課題情報 を自然言語でプロンプトに含める
-	2.	SQLiteのスキーマ情報 をあらかじめ固定部分としてプロンプトに含める
-	3.	LLMに 実行すべきSQLクエリの生成 を依頼（例：対応するFAQやテンプレ文の抽出）
-	4.	生成されたSQLクエリをLambdaで実行
-	5.	結果を元に、LLMに 最終的な通知文の生成 を依頼
-	6.	通知文をSlackへ送信
 
+1. **Jira課題情報** を自然言語でプロンプトに含める
+2. **SQLiteのスキーマ情報** をあらかじめ固定部分としてプロンプトに含める
+3. LLMに **実行すべきSQLクエリの生成** を依頼（例：対応するFAQやテンプレ文の抽出）
+4. 生成されたSQLクエリをLambdaで実行
+5. 結果を元に、LLMに **最終的な通知文の生成** を依頼
+6. 通知文をSlackへ送信
+
+```plantuml
 @startuml
 skinparam style strict
 actor Jira
@@ -43,121 +46,143 @@ Lambda -> OpenAI : 通知生成依頼
 OpenAI --> Lambda : 生成された通知文
 Lambda -> SlackAPI : チャンネルへ通知投稿
 @enduml
+```
 
-技術選定
+### 技術選定
 
-コンポーネント	技術	備考
-API Endpoint	Lambda Function URL	Jira Webhookの受信エンドポイントとして利用
-処理	AWS Lambda (Python)	軽量な処理に適したサーバレス環境
-データベース	SQLite3 on Amazon EFS	Lambdaからマウントして読み書き可能に利用
-AI連携	OpenAI API (gpt-4)	通知文の生成処理
-通知送信	Slack Webhook URL	Slackチャンネルに投稿
+| コンポーネント      | 技術                    | 備考                          |
+| ------------ | --------------------- | --------------------------- |
+| API Endpoint | Lambda Function URL   | Jira Webhookの受信エンドポイントとして利用 |
+| 処理           | AWS Lambda (Python)   | 軽量な処理に適したサーバレス環境            |
+| データベース       | SQLite3 on Amazon EFS | Lambdaからマウントして読み書き可能に利用     |
+| AI連携         | OpenAI API (gpt-4)    | 通知文の生成処理                    |
+| 通知送信         | Slack Webhook URL     | Slackチャンネルに投稿               |
 
-データ更新方法（Webhookトリガ）
-	•	Lambdaの最初の処理で、直接EFS上のSQLiteファイルを更新（例：外部APIまたはDBから再構築）
+### データ更新方法（Webhookトリガ）
 
-セキュリティ対応
-	•	API GatewayのURLはランダムなパス構造（例：/webhook/7e12af81b3）で隠蔽
-	•	必要に応じてJira送信元のIPアドレス制限
+- Lambdaの最初の処理で、直接EFS上のSQLiteファイルを更新（例：外部APIまたはDBから再構築）
 
-⸻
+### セキュリティ対応
 
-Implementation
+- API GatewayのURLはランダムなパス構造（例：`/webhook/7e12af81b3`）で隠蔽
+- 必要に応じてJira送信元のIPアドレス制限
 
-1. インフラ構築
-	•	Amazon EFS を作成し、SQLiteファイルを格納（Lambdaと同一VPC/Subnetに配置）
-	•	Amazon API Gateway に /webhook/{token} のHTTPエンドポイントを定義
-	•	AWS Lambda（Python）関数 を作成し、EFSとマウント（読み書き可）
-	•	Lambdaに EFSアクセス権限、Secrets Manager（Slack URLなど）参照権限 をIAM Roleで付与
+---
 
-2. Lambda処理フロー
-	1.	Webhookリクエストを受信（Jira課題作成イベント）
-	2.	Lambda内でSQLiteを更新（例：外部API/DBから取得して再構築）
-	3.	受け取った課題情報とDBスキーマを使って、OpenAIへSQL生成プロンプトを送信
-	4.	SQLを実行し、得られたデータを再びOpenAIに渡し、Slack投稿用メッセージ生成
-	5.	Slack Webhook URLへPOSTして通知
+## Implementation
 
-3. コード構成（例）
+### 1. インフラ構築
 
+-
+
+### 2. Lambda処理フロー
+
+1. Webhookリクエストを受信（Jira課題作成イベント）
+2. Lambda内でSQLiteを更新（例：外部API/DBから取得して再構築）
+3. 受け取った課題情報とDBスキーマを使って、OpenAIへSQL生成プロンプトを送信
+4. SQLを実行し、得られたデータを再びOpenAIに渡し、Slack投稿用メッセージ生成
+5. Slack Webhook URLへPOSTして通知
+
+### 3. コード構成（例）
+
+```
 /lambda/
   ├── handler.py            # Lambdaメイン
   ├── sqlite_manager.py     # SQLite更新＆照会
   ├── prompt_builder.py     # プロンプト構築
   ├── openai_client.py      # OpenAI APIインターフェース
   └── slack_notifier.py     # Slack投稿処理
+```
 
-4. セキュリティ対応
-	•	Jira送信元IPの制限（必要に応じて）
-	•	Slack Webhook URLはSecrets Managerで管理
-	•	Webhook URLは非公開でランダム化
+### 4. セキュリティ対応
 
-⸻
+- Jira送信元IPの制限（必要に応じて）
+- Slack Webhook URLはSecrets Managerで管理
+- Webhook URLは非公開でランダム化
 
-Milestones
+---
 
-フェーズ	内容	担当	目安期間
-M1	Jira Webhookの構成と受信検証（API Gateway + Lambda連携）	Backend	1日
-M2	EFS構築とLambdaマウント、SQLite読み書き確認	Infra / Backend	1日
-M3	SQLite更新処理の実装（外部データからの再構築含む）	Backend	1日
-M4	OpenAI API連携とプロンプト構築・応答処理の実装	AI / Backend	1〜2日
-M5	Slack通知処理の実装とWebhook連携テスト	Backend	0.5日
-M6	セキュリティ設定（Secrets Manager, Webhook非公開URL）	Infra	0.5日
-M7	統合テスト（エンドツーエンド）とCloudWatch Logs確認	QA	1日
-M8	Terraformによるインフラコード化とCI/CD導入（GitHub Actions等）	DevOps	1〜2日
-M9	開発体験整備（LocalStack, LLMサンドボックス, テスト実装）	全体	1日
+## Milestones
 
+| フェーズ   | 内容                                            | 担当              | 目安期間 |
+| ------ | --------------------------------------------- | --------------- | ---- |
+| **M1** | Jira Webhookの構成と受信検証（API Gateway + Lambda連携）  | Backend         | 1日   |
+| **M2** | EFS構築とLambdaマウント、SQLite読み書き確認                 | Infra / Backend | 1日   |
+| **M3** | SQLite更新処理の実装（外部データからの再構築含む）                  | Backend         | 1日   |
+| **M4** | OpenAI API連携とプロンプト構築・応答処理の実装                  | AI / Backend    | 1〜2日 |
+| **M5** | Slack通知処理の実装とWebhook連携テスト                     | Backend         | 0.5日 |
+| **M6** | セキュリティ設定（Secrets Manager, Webhook非公開URL）      | Infra           | 0.5日 |
+| **M7** | 統合テスト（エンドツーエンド）とCloudWatch Logs確認             | QA              | 1日   |
+| **M8** | Terraformによるインフラコード化とCI/CD導入（GitHub Actions等） | DevOps          | 1〜2日 |
+| **M9** | 開発体験整備（LocalStack, LLMサンドボックス, テスト実装）         | 全体              | 1日   |
 
-⸻
+---
 
-Optional Features
+## Optional Features
 
-⏰ 期限超過チケットの定期通知機能（後追い予定）
+### ⏰ 期限超過チケットの定期通知機能（後追い予定）
 
-Jira APIを使って、期限日を過ぎた未完了の課題を毎日Slack通知する機能。
-LLMを使わず、テンプレートベースでの通知を基本とする。
+Jira APIを使って、期限日を過ぎた未完了の課題を毎日Slack通知する機能。 LLMを使わず、テンプレートベースでの通知を基本とする。
 
-特徴
-	•	定時実行：Amazon EventBridge + Lambda（例：毎朝9:00）
-	•	Jira JQL：duedate < now() AND statusCategory != Done
-	•	Slack通知形式：
+#### 特徴
 
-[Jira期限切れチケット通知]
-- PROJ-123: レビューが未完了です（期限: 2025-07-31）
-- PROJ-124: テスト未実施（期限: 2025-07-30）
+- 定時実行：Amazon EventBridge + Lambda（例：毎朝9:00）
+- Jira JQL：`duedate < now() AND statusCategory != Done`
+- Slack通知形式：
+  ```
+  [Jira期限切れチケット通知]
+  - PROJ-123: レビューが未完了です（期限: 2025-07-31）
+  - PROJ-124: テスト未実施（期限: 2025-07-30）
+  ```
+- OpenAI使用は任意、通知文章の自然化や分類をしたい場合のみ使用
 
+#### 想定コード構成追加
 
-	•	OpenAI使用は任意、通知文章の自然化や分類をしたい場合のみ使用
-
-想定コード構成追加
-
+```
 /lambda/
   └── cron_notifier.py  # Jira → Slack の定期通知処理
+```
 
-今後の設計タスク
-	•	TerraformにスケジュールLambda用リソース追加
-	•	Jira認証トークンの管理（Secrets Manager）
-	•	通知形式のカスタマイズ有無確認
+#### 今後の設計タスク
 
-⸻
+- TerraformにスケジュールLambda用リソース追加
+- Jira認証トークンの管理（Secrets Manager）
+- 通知形式のカスタマイズ有無確認
 
-Gathering Results
+---
+
+## Gathering Results
 
 このシステムが成功したかどうかを以下の観点で評価します：
 
-🎯 機能要件達成度
-	•	Jira課題作成イベントが正しくトリガーされているか？
-	•	SQLite更新処理が正しく毎回反映されているか？
-	•	LLMにより適切なSQL文とSlack通知文が生成されているか？
-	•	Slackへの投稿内容が正確・即時であるか？
+### 🎯 機能要件達成度
 
-📈 運用・品質指標
-	•	CloudWatch Logs上でエラー率、実行時間を監視
-	•	Slack通知までの平均応答時間が5秒以内
-	•	Lambda失敗率 < 1%
-	•	EFS書き込み整合性・データ欠損がないことの定期検証
+-
 
-⸻
+### 📈 運用・品質指標
 
-Need Professional Help in Developing Your Architecture?
+-
 
-Please contact me at sammuti.com :)
+### 🔧 外部サービス準備手順
+
+#### Slack 側
+
+-
+
+#### Jira 側
+
+-
+
+#### OpenAI 側
+
+-
+
+### 📈 運用・品質指標
+
+-
+
+---
+
+## Need Professional Help in Developing Your Architecture?
+
+Please contact me at [sammuti.com](https://sammuti.com) :)
