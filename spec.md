@@ -73,7 +73,15 @@ Lambda -> SlackAPI : チャンネルへ通知投稿
 
 ### 1. インフラ構築
 
--
+- Terraformで以下を定義・デプロイ：
+  - Lambda Function（handler.py）
+  - Lambda Function URL（Webhookエンドポイント）
+  - EFS（SQLite DB格納）とマウントターゲット
+  - Secrets Manager（Slack Webhook, OpenAIキー, Jira APIトークン）
+  - IAM Role（LambdaがEFS・Secretsへアクセス可能）
+- Terraform v1.5+ および AWS Provider ~>5.0 を想定
+- Lambdaレイヤーに依存ライブラリをパッケージング
+- ローカル検証環境として AWS SAM CLI または LocalStack を併用
 
 ### 2. Lambda処理フロー
 
@@ -157,25 +165,40 @@ Jira APIを使って、期限日を過ぎた未完了の課題を毎日Slack通�
 
 ### 🎯 機能要件達成度
 
--
+- Jira課題作成イベントがLambdaを確実にトリガーしている
+- SQLiteファイルが正しく毎回更新され、最新状態で照合されている
+- OpenAIが適切なSQL文を生成し、実行結果が正しい
+- Slackへの投稿が意図したチャンネル・フォーマットで送られている
 
 ### 📈 運用・品質指標
 
--
+| 指標項目                         | 評価基準                     | 備考                         |
+|----------------------------------|------------------------------|------------------------------|
+| Lambda実行時間                  | < 5秒（P95）                 | 長い処理はリトライ発生要因に |
+| Slack通知までの遅延             | < 10秒                       | ユーザ通知の鮮度確保         |
+| Lambdaの失敗率                  | < 1%                         | エラー原因はCloudWatchで確認 |
+| EFS読み書き整合性               | 書き込み後即読出し可能な状態 | 破損・競合がないこと         |
+| CloudWatch Logsでの監視        | エラー発生時に通知 or 可視化 | 例：Error, Exception         |
 
 ### 🔧 外部サービス準備手順
 
 #### Slack 側
 
--
+- Slackアプリを作成し、Webhook URLを発行（チャンネルへの送信権限を付与）
+- Webhook URLをSecrets Managerに保存
 
 #### Jira 側
 
--
+- Jira CloudでWebhook設定を追加
+  - トリガー：Issue Created
+  - 送信先：Lambda Function URL（ランダムパス）
+- Webhookの送信元IPがあれば記録・IP制限（必要に応じて）
 
 #### OpenAI 側
 
--
+- OpenAI APIキーを取得
+- モデル（gpt-4）とトークン制限を確認
+- Secrets Managerに保存
 
 ### 📈 運用・品質指標
 
@@ -186,3 +209,4 @@ Jira APIを使って、期限日を過ぎた未完了の課題を毎日Slack通�
 ## Need Professional Help in Developing Your Architecture?
 
 Please contact me at [sammuti.com](https://sammuti.com) :)
+
